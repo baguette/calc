@@ -91,21 +91,29 @@ impl Lexer {
 
 
 /**********************************************************************
- * PARSER / INTERPRETER
+ * PARSER
  */
+
+// Abstract syntax tree
+#[derive(Clone,Debug)]
+enum AST {
+  Num(i32),
+  Plus(Box<AST>, Box<AST>),
+  Minus(Box<AST>, Box<AST>),
+  Times(Box<AST>, Box<AST>),
+  Divide(Box<AST>, Box<AST>)
+}
 
 struct Parser<'a> {
   tok : Token,
-  lex : &'a mut Lexer,
-  stack : Vec<i32>
+  lex : &'a mut Lexer
 }
 
 impl<'a> Parser<'a> {
   fn new(lex : &'a mut Lexer) -> Parser {
     Parser {
       tok : lex.get_token(),
-      lex : lex,
-      stack : Vec::new()
+      lex : lex
     }
   }
 
@@ -127,71 +135,82 @@ impl<'a> Parser<'a> {
    * and therefore suitable for recursive descent parsing
    */
   // Starting production. Use this as entry into the parser.
-  fn program(&mut self) {
-    self.exp();
-    self.semi();
+  fn program(&mut self) -> AST {
+    let a = self.exp();
+    self.semi(a)
   }
 
-  fn exp(&mut self) {
-    self.term();
-    self.exp_();
+  fn exp(&mut self) -> AST {
+    let t = self.term();
+    self.exp_(t)
   }
 
-  fn exp_(&mut self) {
+  fn exp_(&mut self, t : AST) -> AST {
     match self.tok {
-      Token::Plus  => { self.eat(Token::Plus);  self.term();
-                        let x = self.stack.pop().unwrap();
-                        let y = self.stack.pop().unwrap();
-                        self.stack.push(y + x);
-                        self.exp_(); },
-      Token::Minus => { self.eat(Token::Minus); self.term();
-                        let x = self.stack.pop().unwrap();
-                        let y = self.stack.pop().unwrap();
-                        self.stack.push(y - x);
-                        self.exp_(); },
-      _ => { return; }
+      Token::Plus  => { self.eat(Token::Plus);
+                        let s = self.term();
+                        let rc = AST::Plus(Box::new(t), Box::new(s));
+                        self.exp_(rc) },
+      Token::Minus => { self.eat(Token::Minus);
+                        let s = self.term();
+                        let rc = AST::Minus(Box::new(t), Box::new(s));
+                        self.exp_(rc) },
+      _ => { t }
     }
   }
 
-  fn term(&mut self) {
-    self.factor();
-    self.term_();
+  fn term(&mut self) -> AST {
+    let f = self.factor();
+    self.term_(f)
   }
 
-  fn term_(&mut self) {
+  fn term_(&mut self, f : AST) -> AST {
     match self.tok {
-      Token::Times  => { self.eat(Token::Times);  self.factor();
-                         let x = self.stack.pop().unwrap();
-                         let y = self.stack.pop().unwrap();
-                         self.stack.push(y * x);
-                         self.term_(); },
-      Token::Divide => { self.eat(Token::Divide); self.factor();
-                         let x = self.stack.pop().unwrap();
-                         let y = self.stack.pop().unwrap();
-                         self.stack.push(y / x);
-                         self.term_(); },
-      _ => { return; }
+      Token::Times  => { self.eat(Token::Times);
+                         let g = self.factor();
+                         let rc = AST::Times(Box::new(f), Box::new(g));
+                         self.term_(rc) },
+      Token::Divide => { self.eat(Token::Divide);
+                         let g = self.factor();
+                         let rc = AST::Divide(Box::new(f), Box::new(g));
+                         self.term_(rc) },
+      _ => { f }
     }
   }
 
-  fn factor(&mut self) {
+  fn factor(&mut self) -> AST {
     let tok = self.tok.clone();  // Make the borrow checker stop complaining
     match tok {
-      Token::Num(ref x) => { self.stack.push(x.parse::<i32>().unwrap());
-                             self.get_token() } ,
+      Token::Num(ref x) => { self.get_token();
+                             AST::Num(x.parse::<i32>().unwrap()) } ,
       Token::LParen => { self.eat(Token::LParen);
-                         self.exp();
-                         self.eat(Token::RParen) } ,
+                         let rc = self.exp();
+                         self.eat(Token::RParen);
+                         rc } ,
       _ => { panic!("Syntax error: expected number or parenthesis") }
     }
   }
 
-  // Terminating production. Forces calculation and ends the program.
-  fn semi(&mut self) {
-    match self.tok {
-      Token::Semi => { println!("{}", self.stack.pop().unwrap()) },
-      _ => { panic!("Syntax error: expected semicolon") }
-    }
+  // Terminal production.  Ends parsing.
+  fn semi(&mut self, a : AST) -> AST {
+    a
+  }
+}
+
+
+
+/**********************************************************************
+ * INTERPRETER
+ */
+
+// Recursively evaluate the expression tree
+fn evaluate(a : AST) -> i32 {
+  match a {
+    AST::Num(x) => x,
+    AST::Plus(x, y) => evaluate(*x) + evaluate(*y),
+    AST::Minus(x, y) => evaluate(*x) - evaluate(*y),
+    AST::Times(x, y) => evaluate(*x) * evaluate(*y),
+    AST::Divide(x, y) => evaluate(*x) / evaluate(*y)
   }
 }
 
@@ -205,5 +224,10 @@ fn main() {
   let mut lexer = Lexer::new();
   let mut parser = Parser::new(&mut lexer);
 
-  parser.program();
+  println!("Enter an arithmetic expression using integers followed by a ;");
+
+  let expression = parser.program();
+
+  //println!("{:?}", expression);
+  println!("{}", evaluate(expression));
 }
